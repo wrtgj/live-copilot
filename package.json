@@ -1,0 +1,27 @@
+{
+  "name": "live-script-copilot",
+  "private": true,
+  "version": "1.0.0",
+  "description": "AI 实时话术辅助网站 - 直播网红语音实时生成应对话术",
+  "workspaces": [
+    "apps/web",
+    "apps/server"
+  ],
+  "scripts": {
+    "dev": "concurrently -n web,server -c cyan,magenta \"npm run dev -w @lsc/web\" \"npm run dev -w @lsc/server\"",
+    "build": "npm run build -w @lsc/web && npm run build -w @lsc/server",
+    "start": "npm run start -w @lsc/server",
+    "seed": "python3 scripts/seed.py",
+    "backup": "python3 scripts/backup_db.py",
+    "test:smoke": "NODE_PATH=$(pwd)/node_modules node scripts/smoke.mjs",
+    "test:rules": "npx tsx scripts/check-rules.ts",
+    "typecheck": "tsc -p apps/server/tsconfig.json --noEmit && tsc -p apps/web/tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "concurrently": "^9.1.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
