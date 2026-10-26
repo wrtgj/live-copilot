@@ -1,11 +1,17 @@
-"""LLM Provider（OpenAI 兼容协议，默认 DeepSeek）。
+"""LLM Provider（基于 LangChain，默认 DeepSeek 等 OpenAI 兼容服务）。
 
-支持 mock 模式：CI / 无 Key 本地演示时使用，不产生任何费用。
+设计要点：
+- 通过 langchain_openai.ChatOpenAI 接入任意 OpenAI 兼容端点
+  （DeepSeek / OpenAI / Azure / 腾讯云 MaaS / 本地 vLLM 等），
+  只需改 LLM_BASE_URL / LLM_MODEL / LLM_API_KEY 即可切换 provider，无需改代码。
+- 保留轻量 MockLlm 供 CI / 无 Key 本地演示使用，零费用。
+- 对外接口与旧实现完全一致：
+  LlmHandle.stream(system, user, on_delta, signal) -> (prompt_tokens, completion_tokens)
 """
 import asyncio
-import json
 
-import httpx
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage
 
 from .config import env
 
@@ -25,6 +31,8 @@ class LlmHandle:
 
 
 class MockLlm(LlmHandle):
+    """无 Key 时的降级实现：逐字符流式吐固定话术，零费用。"""
+
     def name(self) -> str:
         return "mock"
 
@@ -38,60 +46,66 @@ class MockLlm(LlmHandle):
         return 320, 64
 
 
-class OpenAICompatLlm(LlmHandle):
+class LangChainLlm(LlmHandle):
+    """基于 LangChain ChatOpenAI 的流式实现（OpenAI 兼容协议）。"""
+
     def __init__(self):
-        self._client = httpx.AsyncClient(
-            base_url=env.LLM_BASE_URL,
-            headers={"Authorization": f"Bearer {env.LLM_API_KEY or 'sk-empty'}"},
+        self._model = ChatOpenAI(
+            model=env.LLM_MODEL,
+            temperature=env.LLM_TEMPERATURE,
+            top_p=env.LLM_TOP_P,
+            max_tokens=env.LLM_MAX_TOKENS,
+            openai_api_base=env.LLM_BASE_URL,
+            openai_api_key=env.LLM_API_KEY or "sk-empty",
+            streaming=True,
             timeout=env.LLM_TIMEOUT_MS / 1000.0,
+            max_retries=2,
         )
 
     def name(self) -> str:
-        return env.LLM_PROVIDER
+        return f"langchain:{env.LLM_PROVIDER}"
 
     async def stream(self, system: str, user: str, on_delta, signal=None) -> tuple[int, int]:
-        url = "/chat/completions"
-        payload = {
-            "model": env.LLM_MODEL,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "temperature": env.LLM_TEMPERATURE,
-            "top_p": env.LLM_TOP_P,
-            "max_tokens": env.LLM_MAX_TOKENS,
-            "stream": True,
-            "stream_options": {"include_usage": True},
-        }
+        messages = [SystemMessage(content=system), HumanMessage(content=user)]
         prompt_tokens = 0
         completion_tokens = 0
-        async with self._client.stream("POST", url, json=payload) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                line = line.strip()
-                if not line or not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    break
-                try:
-                    obj = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
-                choices = obj.get("choices") or []
-                if choices:
-                    delta = (choices[0].get("delta") or {}).get("content") or ""
-                    if delta:
-                        await on_delta(delta)
-                usage = obj.get("usage")
-                if usage:
-                    prompt_tokens = usage.get("prompt_tokens", 0) or prompt_tokens
-                    completion_tokens = usage.get("completion_tokens", 0) or completion_tokens
+        async for chunk in self._model.astream(messages):
+            if signal is not None and signal.cancelled():
+                break
+            delta = self._extract_text(chunk)
+            if delta:
+                await on_delta(delta)
+            um = getattr(chunk, "usage_metadata", None)
+            if um is not None:
+                if isinstance(um, dict):
+                    prompt_tokens = um.get("input_tokens", prompt_tokens) or prompt_tokens
+                    completion_tokens = um.get("output_tokens", completion_tokens) or completion_tokens
+                else:
+                    prompt_tokens = getattr(um, "input_tokens", prompt_tokens) or prompt_tokens
+                    completion_tokens = getattr(um, "output_tokens", completion_tokens) or completion_tokens
         return prompt_tokens, completion_tokens
+
+    @staticmethod
+    def _extract_text(chunk) -> str:
+        """LangChain 的 content 可能是 str，也可能是多模态 list；统一抽成纯文本。"""
+        content = getattr(chunk, "content", "")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    parts.append(item.get("text", ""))
+                else:
+                    parts.append(str(item))
+            return "".join(parts)
+        return "" if content is None else str(content)
 
 
 def create_llm() -> LlmHandle:
     if not env.LLM_API_KEY or env.LLM_API_KEY.startswith("sk-xxx"):
         print("[llm] 未配置 LLM_API_KEY，已降级为 mock 模式（演示可用，不产生费用）")
         return MockLlm()
-    return OpenAICompatLlm()
+    return LangChainLlm()

@@ -192,7 +192,7 @@ LLM_MODEL=deepseek-chat
 | 后端（推荐） | Python · FastAPI · uvicorn · SQLite · numpy（声纹 MFCC 基线） |
 | 后端（兼容） | Node.js 20+ · Express · ws · better-sqlite3 |
 | ASR | 浏览器原生 Web Speech API（含手动文本兜底；云端 ASR 适配位预留） |
-| LLM | OpenAI 兼容协议（默认 DeepSeek），无密钥自动 mock |
+| LLM | 基于 LangChain（ChatOpenAI，OpenAI 兼容协议，默认 DeepSeek），无密钥自动 mock |
 | 合规 | 双层拦截：System Prompt 禁令 + 6 类红线词库 |
 
 ---
@@ -213,7 +213,7 @@ live-script-copilot/
 │       │   ├── routes.py         REST API（鉴权/人设/会话/反馈/用量/声纹）
 │       │   ├── gateway.py        WebSocket 网关（会话状态机、生成编排、心跳、声纹分离）
 │       │   ├── voiceprint.py     声纹说话人识别（MFCC 基线 + wespeaker 后端自动探测）
-│       │   ├── llm.py            Provider 适配层（OpenAI 兼容 + mock）
+│       │   ├── llm.py            Provider 适配层（LangChain ChatOpenAI + mock）
 │       │   ├── prompt.py         Prompt 工程 + 输出解析
 │       │   ├── risk.py           合规红线守卫（双层拦截）
 │       │   ├── slicer.py         语义切片（VAD 门控）
@@ -356,5 +356,5 @@ uvicorn app.main:app --host 0.0.0.0 --port 8787
 ## 🙏 致谢
 
 - 实时转写基于浏览器原生 Web Speech API
-- LLM 默认接入 DeepSeek（OpenAI 兼容协议）
+- LLM 基于 LangChain 接入 DeepSeek（OpenAI 兼容协议）
 - 声纹后端可接入 [wespeaker](https://github.com/wenet-e2e/wespeaker)
