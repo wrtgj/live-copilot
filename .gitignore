@@ -3,6 +3,11 @@ dist/
 .DS_Store
 *.log
 
+# Python 缓存（编译产物，不提交）
+__pycache__/
+*.pyc
+*.pyo
+
 # 本地配置（含密钥，切勿提交）
 .env
 
